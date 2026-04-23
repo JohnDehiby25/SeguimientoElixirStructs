@@ -1,0 +1,3 @@
+123;Juan Pérez;30;Yoga,Pilates,Spinning
+456;Ana García;25;CrossFit,Yoga
+789;Carlos López;35;Spinning,Natación,Yoga
