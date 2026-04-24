@@ -8,14 +8,14 @@ defmodule Producto do
       String.length(codigo) > 5 ->
         {:error, :codigo_largo}
 
-      precio < 0 ->
-        {:error, :precio_invalido}
+      not is_integer(cantidad) ->
+        {:error, :cantidad_no_entera}
 
       cantidad < 0 ->
         {:error, :cantidad_invalida}
 
-      not is_integer(cantidad) ->
-        {:error, :cantidad_no_entera}
+      precio < 0 ->
+        {:error, :precio_invalido}
 
       true ->
         {:ok, %__MODULE__{
@@ -30,6 +30,7 @@ end
 
 defmodule Inventario do
   # ---------------- CRUD ----------------
+
   def agregar_producto(inv, codigo, nombre, precio, cantidad) do
     if Map.has_key?(inv, codigo) do
       {:error, :codigo_repetido}
@@ -78,7 +79,7 @@ defmodule Inventario do
       p.nombre
       |> String.downcase()
       |> String.graphemes()
-      |> Enum.count(&(&1 in ["a","e","i","o","u"])) >= 2
+      |> Enum.count(&(&1 in ["a", "e", "i", "o", "u"])) >= 2
     end)
     |> Enum.map(fn p -> {p.codigo, p.nombre} end)
   end
@@ -89,8 +90,9 @@ defmodule Inventario do
     |> Map.values()
     |> Enum.filter(fn p ->
       nombre = String.downcase(p.nombre)
-      String.first(nombre) == String.last(nombre)
+      nombre != "" and String.first(nombre) == String.last(nombre)
     end)
+    |> Enum.map(fn p -> {p.codigo, p.nombre} end)
   end
 
   # 3. Productos por debajo de cierto precio

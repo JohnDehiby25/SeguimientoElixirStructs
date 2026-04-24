@@ -1,3 +1,2 @@
-123;Juan Pérez;30;Yoga,Pilates,Spinning
-456;Ana García;25;CrossFit,Yoga
-789;Carlos López;35;Spinning,Natación,Yoga
+100;Juan Pérez Gómez;31;Pilates
+200;María García;25;Spinning
