@@ -16,19 +16,30 @@ defmodule Usuario do
   @enforce_keys [:id, :nombre, :email]
   defstruct [:id, :nombre, :email, libros_prestados: []]
 
+  def nuevo(id, nombre, email) do
+    if email == "" do
+      {:error, :email_invalido}
+    else
+      {:ok, %__MODULE__{id: id, nombre: nombre, email: email}}
+    end
+  end
+
   def puede_prestar?(%__MODULE__{libros_prestados: libros}) do
     length(libros) < 3
   end
 
-  def agregar_prestamo(usuario, isbn) do
-    {:ok, %{usuario | libros_prestados: [isbn | usuario.libros_prestados]}}
+  def agregar_prestamo(%__MODULE__{libros_prestados: libros} = usuario, isbn) do
+    if Enum.member?(libros, isbn) do
+      {:error, :ya_prestado}
+    else
+      {:ok, %{usuario | libros_prestados: [isbn | libros]}}
+    end
   end
 
   def quitar_prestamo(usuario, isbn) do
     {:ok, %{usuario | libros_prestados: List.delete(usuario.libros_prestados, isbn)}}
   end
 end
-
 
 defmodule Prestamo do
   @enforce_keys [:id, :libro_isbn, :usuario_id, :fecha_prestamo]
@@ -49,10 +60,7 @@ defmodule Prestamo do
   end
 end
 
-
 defmodule Biblioteca do
-  # Estado: %{libros: %{}, usuarios: %{}, prestamos: %{}}
-
   def nueva do
     %{libros: %{}, usuarios: %{}, prestamos: %{}}
   end
@@ -70,60 +78,77 @@ defmodule Biblioteca do
   # -------- USUARIOS --------
 
   def agregar_usuario(bib, usuario) do
-    {:ok, %{bib | usuarios: Map.put(bib.usuarios, usuario.id, usuario)}}
+    if Map.has_key?(bib.usuarios, usuario.id) do
+      {:error, :usuario_duplicado}
+    else
+      {:ok, %{bib | usuarios: Map.put(bib.usuarios, usuario.id, usuario)}}
+    end
   end
 
   # -------- PRESTAR --------
 
   def prestar_libro(bib, isbn, user_id, prestamo_id) do
-    with libro when not is_nil(libro) <- Map.get(bib.libros, isbn),
-         usuario when not is_nil(usuario) <- Map.get(bib.usuarios, user_id),
-         true <- Usuario.puede_prestar?(usuario),
-         {:ok, libro_act} <- Libro.prestar(libro),
-         {:ok, usuario_act} <- Usuario.agregar_prestamo(usuario, isbn) do
+    libro = Map.get(bib.libros, isbn)
+    usuario = Map.get(bib.usuarios, user_id)
 
-      prestamo = %Prestamo{
-        id: prestamo_id,
-        libro_isbn: isbn,
-        usuario_id: user_id,
-        fecha_prestamo: Date.utc_today()
-      }
+    cond do
+      libro == nil or usuario == nil ->
+        {:error, :no_encontrado}
 
-      {:ok, %{
-        bib |
-        libros: Map.put(bib.libros, isbn, libro_act),
-        usuarios: Map.put(bib.usuarios, user_id, usuario_act),
-        prestamos: Map.put(bib.prestamos, prestamo_id, prestamo)
-      }}
-    else
-      false -> {:error, :limite_libros}
-      {:error, r} -> {:error, r}
-      _ -> {:error, :no_encontrado}
+      not Usuario.puede_prestar?(usuario) ->
+        {:error, :limite_libros}
+
+      true ->
+        case Libro.prestar(libro) do
+          {:error, r} ->
+            {:error, r}
+
+          {:ok, libro_act} ->
+            case Usuario.agregar_prestamo(usuario, isbn) do
+              {:error, r} ->
+                {:error, r}
+
+              {:ok, usuario_act} ->
+                prestamo = %Prestamo{
+                  id: prestamo_id,
+                  libro_isbn: isbn,
+                  usuario_id: user_id,
+                  fecha_prestamo: Date.utc_today()
+                }
+
+                {:ok, %{
+                  bib |
+                  libros: Map.put(bib.libros, isbn, libro_act),
+                  usuarios: Map.put(bib.usuarios, user_id, usuario_act),
+                  prestamos: Map.put(bib.prestamos, prestamo_id, prestamo)
+                }}
+            end
+        end
     end
   end
 
   # -------- DEVOLVER --------
 
   def devolver_libro(bib, prestamo_id) do
-    case Map.get(bib.prestamos, prestamo_id) do
-      nil ->
-        {:error, :no_encontrado}
+    prestamo = Map.get(bib.prestamos, prestamo_id)
 
-      prestamo ->
-        {:ok, prestamo} = Prestamo.devolver(prestamo)
+    if prestamo == nil do
+      {:error, :no_encontrado}
+    else
+      {:ok, prestamo} = Prestamo.devolver(prestamo)
 
-        libro = Map.get(bib.libros, prestamo.libro_isbn)
-        {:ok, libro} = Libro.devolver(libro)
+      libro = Map.get(bib.libros, prestamo.libro_isbn)
+      {:ok, libro} = Libro.devolver(libro)
 
-        usuario = Map.get(bib.usuarios, prestamo.usuario_id)
-        {:ok, usuario} = Usuario.quitar_prestamo(usuario, prestamo.libro_isbn)
+      usuario = Map.get(bib.usuarios, prestamo.usuario_id)
+      {:ok, usuario} = Usuario.quitar_prestamo(usuario, prestamo.libro_isbn)
 
-        {:ok, %{
-          bib |
-          libros: Map.put(bib.libros, libro.isbn, libro),
-          usuarios: Map.put(bib.usuarios, usuario.id, usuario),
-          prestamos: Map.put(bib.prestamos, prestamo_id, prestamo)
-        }}
+      {:ok, %{
+        bib |
+        libros: Map.put(bib.libros, libro.isbn, libro),
+        usuarios: Map.put(bib.usuarios, usuario.id, usuario),
+        prestamos: Map.put(bib.prestamos, prestamo_id, prestamo)
+      }}
     end
   end
 
@@ -132,32 +157,32 @@ defmodule Biblioteca do
   def libros_mas_prestados(bib) do
     bib.prestamos
     |> Map.values()
-    |> Enum.frequencies_by(& &1.libro_isbn)
+    |> Enum.frequencies_by(fn p -> p.libro_isbn end)
   end
 
   def usuarios_con_retraso(bib) do
     bib.prestamos
     |> Map.values()
-    |> Enum.filter(&(Prestamo.dias_retraso(&1) > 0))
-    |> Enum.map(& &1.usuario_id)
+    |> Enum.filter(fn p -> Prestamo.dias_retraso(p) > 0 end)
+    |> Enum.map(fn p -> p.usuario_id end)
     |> Enum.uniq()
+    |> Enum.map(fn id -> Map.get(bib.usuarios, id) end)
   end
 
   def libros_por_genero(bib) do
     bib.libros
     |> Map.values()
-    |> Enum.group_by(& &1.genero)
+    |> Enum.group_by(fn l -> l.genero end)
   end
 
   def disponibilidad(bib) do
     bib.libros
     |> Map.values()
-    |> Enum.group_by(& &1.disponible)
+    |> Enum.group_by(fn l -> l.disponible end)
   end
 end
 
-
-# -------- MAIN DE PRUEBA --------
+# -------- MAIN --------
 
 defmodule GestionBiblioteca do
   def main do
@@ -166,7 +191,7 @@ defmodule GestionBiblioteca do
     libro1 = %Libro{isbn: "1", titulo: "El Quijote", autor: "Cervantes", año: 1605, genero: "Novela"}
     libro2 = %Libro{isbn: "2", titulo: "1984", autor: "Orwell", año: 1949, genero: "Distopía"}
 
-    usuario = %Usuario{id: "U1", nombre: "Juan", email: "juan@mail.com"}
+    {:ok, usuario} = Usuario.nuevo("U1", "Juan", "juan@mail.com")
 
     {:ok, bib} = Biblioteca.agregar_libro(bib, libro1)
     {:ok, bib} = Biblioteca.agregar_libro(bib, libro2)
